@@ -1,16 +1,16 @@
-import { pfn, PPubKeyHash, PCurrencySymbol, PTokenName, V2, bool, perror, plet, pmatch, pBool, peqData, punsafeConvertType, PValue, POutputDatum, pBSToData, pConstrToData, UtilityTermOf, TermBool, Term, addUtilityForType, pInt, pByteString, ptraceError, bs, data, list, peqBs, pisEmpty, pnot, psndPair, punBData, punListData, PByteString, pforce, pdelay, PTxInInfo, int, pif, phoist } from "@harmoniclabs/plu-ts";
+import { pfn, PPubKeyHash, PCurrencySymbol, PTokenName, bool, perror, plet, pmatch, pBool, peqData, punsafeConvertType, PValue, POutputDatum, pBSToData, pConstrToData, UtilityTermOf, TermBool, Term, addUtilityForType, pInt, pByteString, ptraceError, bs, data, list, peqBs, pisEmpty, pnot, psndPair, punBData, punListData, PByteString, pforce, pdelay, PTxInInfo, int, pif, phoist, Script, ScriptType, compile, makeValidator, pList, PScriptContext, PTxOutRef } from "@harmoniclabs/plu-ts";
 import { TradeAction } from "./TradeAction";
 import { TradeDatum } from "./TradeDatum";
 import { pvalueOf } from "./utils/pvalueOf";
 import { txSignedByNebulaValidator } from "./utils/txSignedByNebulaValidator";
 import { checkRoyalty } from "./utils/checkRoyalty";
-import { DatumMetadata, Metadata, RoyalityInfo } from "./types";
+import { DatumMetadata, Metadata, RoyalityInfo, TraitOption } from "./types";
 import { fromUtf8 } from "@harmoniclabs/uint8array-utils";
 
 export interface ContractParams {
-    protocolKey?: UtilityTermOf<typeof PPubKeyHash>,
-    royalityTokenPolicy: UtilityTermOf<typeof PCurrencySymbol> 
-    royalityTokenName: UtilityTermOf<typeof PTokenName> 
+    protocolKey?: Term<typeof PPubKeyHash>,
+    royalityTokenPolicy: Term<typeof PCurrencySymbol> 
+    royalityTokenName: Term<typeof PTokenName> 
 }
 
 const plovelacesOf = phoist(
@@ -22,7 +22,7 @@ const plovelacesOf = phoist(
 const contract = ( params: ContractParams ) => pfn([
     TradeDatum.type,
     TradeAction.type,
-    V2.PScriptContext.type
+    PScriptContext.type
 ],  bool)
 (( tradeDatum, action, ctx ) => {
 
@@ -31,7 +31,7 @@ const contract = ( params: ContractParams ) => pfn([
         const ownUtxoRef = plet(
             pmatch( purpose )
             .onSpending( ({ utxoRef }) => utxoRef )
-            ._( _ => perror( V2.PTxOutRef.type ) )
+            ._( _ => perror( PTxOutRef.type ) )
         );
 
         const ownInputValue = plet(
@@ -50,7 +50,10 @@ const contract = ( params: ContractParams ) => pfn([
             POutputDatum.InlineDatum({
                 datum: pConstrToData
                     .$( 0 )
-                    .$([ pBSToData.$( ownUtxoRef as any ) ])
+                    .$(
+                        pList( data )
+                        ([ ownUtxoRef as any ])
+                    )
             })
         );
 
@@ -170,7 +173,7 @@ const contract = ( params: ContractParams ) => pfn([
                                                 .or(
                                                     plet(
                                                         pmatch(
-                                                            metadata.find( entry => entry.fst.eq( Buffer.from("type","utf8") )  )
+                                                            metadata.find( entry => entry.fst.eq( fromUtf8("type") )  )
                                                         )
                                                         .onJust( just => punBData.$( just.val.snd ) )
                                                         .onNothing( _ => perror( bs ) )
@@ -190,7 +193,7 @@ const contract = ( params: ContractParams ) => pfn([
                                                     .someTerm
                                                 ).in( someTrait =>
                                                     traits.every( _trait =>
-                                                        pmatch(   _trait )
+                                                        pmatch(  punsafeConvertType( _trait, TraitOption.type ) )
                                                         .onMustHave(({ trait }) => someTrait.$( trait.eqTerm ) )
                                                         .onMustNotHave(({ trait }) =>
                                                             pnot.$( someTrait.$( trait.eqTerm )) )
@@ -202,7 +205,7 @@ const contract = ( params: ContractParams ) => pfn([
                                             .$( policyId )
                                             .$(
                                                 PTokenName.from(
-                                                    pByteString( Buffer.from([0,6,67,176]) )
+                                                    pByteString( new Uint8Array([0,6,67,176]) )
                                                     .concat(
                                                         assetName
                                                         .slice( 4 , assetName.length )
@@ -293,4 +296,13 @@ const contract = ( params: ContractParams ) => pfn([
             )
             .onPScriptCredential( _ => txSignedByNebulaValidator.$( tx.mint ).$( ownInputValue as any ) ) 
         });
-})
+});
+
+export const untypedValidator = ( params: ContractParams ) => makeValidator( contract( params ) );
+
+export const compiledContract = ( params: ContractParams ) => compile( untypedValidator( params ) );
+
+export const script = ( params: ContractParams ) => new Script(
+    ScriptType.PlutusV2,
+    compiledContract( params )
+);

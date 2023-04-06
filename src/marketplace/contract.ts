@@ -1,4 +1,4 @@
-import { pfn, PPubKeyHash, PCurrencySymbol, PTokenName, bool, perror, plet, pmatch, pBool, peqData, punsafeConvertType, PValue, POutputDatum, pBSToData, pConstrToData, UtilityTermOf, TermBool, Term, addUtilityForType, pInt, pByteString, ptraceError, bs, data, list, peqBs, pisEmpty, pnot, psndPair, punBData, punListData, PByteString, pforce, pdelay, PTxInInfo, int, pif, phoist, Script, ScriptType, compile, makeValidator, pList, PScriptContext, PTxOutRef } from "@harmoniclabs/plu-ts";
+import { pfn, PPubKeyHash, PCurrencySymbol, PTokenName, bool, perror, plet, pmatch, pBool, peqData, punsafeConvertType, PValue, POutputDatum, pBSToData, pConstrToData, UtilityTermOf, TermBool, Term, addUtilityForType, pInt, pByteString, ptraceError, bs, data, list, peqBs, pisEmpty, pnot, psndPair, punBData, punListData, PByteString, pforce, pdelay, PTxInInfo, int, pif, phoist, Script, ScriptType, compile, makeValidator, pList, PScriptContext, PTxOutRef, pstruct, PMaybe, unit, pmakeUnit } from "@harmoniclabs/plu-ts";
 import { TradeAction } from "./TradeAction";
 import { TradeDatum } from "./TradeDatum";
 import { pvalueOf } from "./utils/pvalueOf";
@@ -19,12 +19,25 @@ const plovelacesOf = phoist(
     .$( PTokenName.from("") ) 
 )
 
-const contract = ( params: ContractParams ) => pfn([
+
+const RoyaltyToken = pstruct({
+    RoyaltyToken: {
+        policyId: PCurrencySymbol.type,
+        assetName: PTokenName.type
+    }
+});
+
+const lowLevel_contract = pfn([
+    PMaybe( PPubKeyHash.type ).type,
+    RoyaltyToken.type,
+
     TradeDatum.type,
     TradeAction.type,
     PScriptContext.type
-],  bool)
-(( tradeDatum, action, ctx ) => {
+],  unit)
+((  maybeProtocolKey,
+    royalityToken,
+    tradeDatum, action, ctx ) => {
 
         const { tx, purpose } = ctx;
 
@@ -57,19 +70,20 @@ const contract = ( params: ContractParams ) => pfn([
             })
         );
 
-        const paidProtocol = ( params.protocolKey instanceof Term ) ?
-        (() => {
-            const protocolPkh = plet( params.protocolKey );
+        const paidProtocol = plet(
+            pmatch( maybeProtocolKey )
+            .onJust(({ val: protocolPkh }) =>
+                tx.outputs.some( out =>
+                    pmatch( out.address.credential )
+                    .onPPubKeyCredential(({ pkh }) => pkh.eq( protocolPkh ))
+                    ._( _ => pBool( false )) 
+                )
+            )
+            .onNothing( _ => pBool( true ) )
+        );
 
-            return tx.outputs.some( out =>
-                pmatch( out.address.credential )
-                .onPPubKeyCredential(({ pkh }) => pkh.eq( protocolPkh ))
-                ._( _ => pBool( false )) 
-            );
-        })() : undefined;
-
-        const royalityTokenPolicy = plet( params.royalityTokenPolicy );
-        const royalityTokenName =   plet( params.royalityTokenName   );
+        const royalityTokenPolicy = plet( royalityToken.policyId );
+        const royalityTokenName =   plet( royalityToken.assetName );
         
         const delayedRoyalityOracleIn = plet(
             pdelay(
@@ -106,7 +120,8 @@ const contract = ( params: ContractParams ) => pfn([
             )
         );
 
-        return pmatch( action )
+        return pif( unit ).$(
+        pmatch( action )
         .onSell( _ => pmatch( tradeDatum )
             .onListing( _ => perror( bool ) )
             .onBid( bid => {
@@ -223,14 +238,7 @@ const contract = ( params: ContractParams ) => pfn([
                         )
                     );
 
-                const finalStatement = nonNegativePaidFee.and( paidBuyer );
-
-                if( paidProtocol instanceof Term )
-                {
-                    return finalStatement.and( paidProtocol )
-                }
-
-                return finalStatement;
+                return nonNegativePaidFee.and( paidBuyer ).and( paidProtocol );
             })
         )
         .onBuy( _ =>
@@ -295,14 +303,17 @@ const contract = ( params: ContractParams ) => pfn([
                 tx.signatories.some( pkh.eqTerm )
             )
             .onPScriptCredential( _ => txSignedByNebulaValidator.$( tx.mint ).$( ownInputValue as any ) ) 
-        });
+        })
+
+        // wrapper if
+        )
+        .then( pmakeUnit() )
+        .else( perror( unit ) );
 });
 
-export const untypedValidator = ( params: ContractParams ) => makeValidator( contract( params ) );
+export const compiledContract = compile( lowLevel_contract );
 
-export const compiledContract = ( params: ContractParams ) => compile( untypedValidator( params ) );
-
-export const script = ( params: ContractParams ) => new Script(
+export const script = new Script(
     ScriptType.PlutusV2,
-    compiledContract( params )
+    compiledContract
 );

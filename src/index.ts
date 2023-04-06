@@ -1,13 +1,8 @@
 import { existsSync } from "fs";
 import { mkdir } from "fs/promises";
 import { cli } from "./app/utils/cli";
-import { script as mkScript } from "./marketplace/contract";
-import { PCurrencySymbol, PTokenName } from "@harmoniclabs/plu-ts";
+import { script } from "./marketplace/contract";
 
-const script = mkScript({
-    royalityTokenName: PTokenName.from("ff".repeat(28)),
-    royalityTokenPolicy: PCurrencySymbol.from("ff".repeat(28)),
-});
 
 console.log("validator compiled succesfully! 🎉\n");
 console.log(
@@ -24,6 +19,6 @@ async function main()
     {
         await mkdir("./testnet");
     }
-    cli.utils.writeScript( script, "./testnet/vesting.plutus.json")
+    cli.utils.writeScript( script, "./testnet/nebula.plutus.json")
 }
 main();
